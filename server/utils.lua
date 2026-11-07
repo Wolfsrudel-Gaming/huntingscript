@@ -180,6 +180,47 @@ function Inventory.AddMoney(src, account, amount)
     return true
 end
 
+function Inventory.GetMoney(src, account)
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return 0 end
+    if account == 'money' and xPlayer.getMoney then
+        return xPlayer.getMoney() or 0
+    end
+    local acc = xPlayer.getAccount(account)
+    return acc and acc.money or 0
+end
+
+function Inventory.RemoveMoney(src, account, amount)
+    if amount <= 0 then return true end
+    if Inventory.GetMoney(src, account) < amount then return false end
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if account == 'money' and xPlayer.removeMoney then
+        xPlayer.removeMoney(amount)
+    else
+        xPlayer.removeAccountMoney(account, amount)
+    end
+    return true
+end
+
+--- Nächster Spieler in Reichweite (ohne den Spieler selbst)
+function GetClosestPlayer(src, maxDist)
+    local coords = GetPlayerCoords(src)
+    if not coords then return nil end
+    local best, bestDist = nil, maxDist
+    for _, p in ipairs(GetPlayersWithCoords()) do
+        if p.src ~= src and GetBucket(p.src) == GetBucket(src) then
+            local dist = #(p.coords - coords)
+            if dist <= bestDist then best, bestDist = p.src, dist end
+        end
+    end
+    return best
+end
+
+function IsPoliceJob(src)
+    local job = GetJobName(src)
+    return job ~= nil and TableContains(Config.Police.jobs, job)
+end
+
 --- Besitzt der Spieler ein Messer zum Ausnehmen?
 function HasKnife(src)
     for _, weapon in ipairs(Config.Butchering.knifeWeapons) do

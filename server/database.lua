@@ -47,6 +47,17 @@ MySQL.ready(function()
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ]])
 
+    MySQL.query.await([[
+        CREATE TABLE IF NOT EXISTS `hunting_players` (
+            `identifier`    VARCHAR(64) NOT NULL,
+            `xp`            INT NOT NULL DEFAULT 0,
+            `license_until` INT NOT NULL DEFAULT 0,
+            `stats`         LONGTEXT NULL,
+            `daily`         LONGTEXT NULL,
+            PRIMARY KEY (`identifier`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ]])
+
     DatabaseReady = true
     for _, cb in ipairs(readyCallbacks) do
         CreateThread(cb)

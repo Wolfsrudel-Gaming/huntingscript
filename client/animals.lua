@@ -81,8 +81,22 @@ local function ApplyFlags(ped, animal)
     end
 end
 
+--- Tarnung eines Spielers: Ansitz und Jäger-Stufe (über Player-State-Bags synchronisiert).
+local function CamouflageMultiplier(serverId)
+    local pState = Player(serverId).state
+    local mult = 1.0
+    if pState.huntHidden then
+        mult = mult * Config.Blinds.stealthMultiplier
+    end
+    if Config.Progression.enabled then
+        local perks = Config.Progression.perks
+        mult = mult * (1.0 - GetPerkValue(pState.huntLevel or 1, perks.stealth, perks.maxStealth))
+    end
+    return mult
+end
+
 --- Effektiver Wahrnehmungsradius eines Tieres gegenüber einem Spieler-Ped.
-local function DetectionRadius(animalPed, base, playerPed, isNight)
+local function DetectionRadius(animalCoords, base, playerPed, playerCoords, serverId, isNight)
     local b = Config.Behaviour
     local radius = base
     if IsPedInAnyVehicle(playerPed, false) then
@@ -93,6 +107,8 @@ local function DetectionRadius(animalPed, base, playerPed, isNight)
         radius = radius * b.sprintMultiplier
     end
     if isNight then radius = radius * b.nightMultiplier end
+    radius = radius * GetWindMultiplier(playerCoords, animalCoords)
+    radius = radius * CamouflageMultiplier(serverId)
     return radius
 end
 
@@ -105,14 +121,19 @@ local function FindNearestPlayer(ped, coords, baseRadius, useDetection)
         local pPed = GetPlayerPed(player)
         local ignore = not useDetection and IsPedInAnyVehicle(pPed, false)   -- Angriffe nicht auf Fahrzeuge
         if pPed ~= 0 and not ignore and not IsEntityDead(pPed) then
-            local dist = #(GetEntityCoords(pPed) - coords)
+            local pCoords = GetEntityCoords(pPed)
+            local dist = #(pCoords - coords)
+            local serverId = GetPlayerServerId(player)
             local radius = baseRadius
             if useDetection then
-                radius = DetectionRadius(ped, baseRadius, pPed, isNight)
+                radius = DetectionRadius(coords, baseRadius, pPed, pCoords, serverId, isNight)
                 if dist <= radius and dist > radius * Config.Behaviour.noLosMultiplier
                     and not HasEntityClearLosToEntity(ped, pPed, 17) then
                     radius = radius * Config.Behaviour.noLosMultiplier
                 end
+            elseif Player(serverId).state.huntHidden then
+                -- Im Ansitz wird man auch von angriffslustigen Tieren seltener entdeckt
+                radius = radius * 0.5
             end
             if dist <= radius and (not bestDist or dist < bestDist) then
                 bestId, bestPed, bestDist = GetPlayerServerId(player), pPed, dist
@@ -157,7 +178,12 @@ local function ApplyMode(ped, animal, mem)
     if mem.mode == 'wander' then
         local home = mem.home or GetEntityCoords(ped)
         ClearPedTasks(ped)
-        TaskWanderInArea(ped, home.x, home.y, home.z, Config.Spawning.homeRadius, 2.0, 6.0)
+        TaskWanderInArea(ped, home.x, home.y, home.z, animal.homeRadius or Config.Spawning.homeRadius, 2.0, 6.0)
+    elseif mem.mode == 'rest' then
+        -- Wundbett: schwer verletztes Tier bleibt liegen bzw. stehen
+        ClearPedTasks(ped)
+        TaskStandStill(ped, -1)
+        SetPedKeepTask(ped, true)
     elseif mem.mode == 'flee' then
         local threat = GetPlayerPedFromServerId(mem.target)
         ClearPedTasks(ped)
@@ -190,8 +216,47 @@ end
 
 local function StartWander(ped, animal)
     local mem = GetMemory(animal)
-    mem.home = ComputeHome(animal, GetEntityCoords(ped))
+    -- Angelockte Tiere kehren zum Köder zurück, alle anderen bleiben, wo sie sind
+    if animal.homeRadius and animal.home then
+        mem.home = animal.home
+    else
+        mem.home = ComputeHome(animal, GetEntityCoords(ped))
+    end
     SetMode(ped, animal, 'wander', nil)
+end
+
+--[[ Schweißfährte: Blutverlust & Blutspur (nur Besitzer) ]]
+
+local function SendBlood(animal, mem, now)
+    if #mem.blood > 0 and now >= (mem.nextBloodSend or 0) then
+        mem.nextBloodSend = now + 1500
+        TriggerServerEvent('wr_hunting:server:bloodTrail', animal.netId, mem.blood)
+        mem.blood = {}
+    end
+end
+
+--- Gibt true zurück, wenn das Tier blutet.
+local function HandleBleeding(ped, animal, mem, coords, health, now)
+    local track = Config.Tracking
+    if not track.enabled then return false end
+    local maxHealth = GetEntityMaxHealth(ped)
+    if maxHealth <= 0 or health / maxHealth > track.bleedThreshold then return false end
+
+    mem.blood = mem.blood or {}
+    if not mem.lastDrop or #(coords - mem.lastDrop) >= track.dropDistance then
+        mem.lastDrop = coords
+        mem.blood[#mem.blood + 1] = { x = coords.x, y = coords.y, z = coords.z }
+    end
+
+    if now >= (mem.nextBleed or 0) then
+        mem.nextBleed = now + track.bleedInterval
+        local newHealth = math.max(0, health - math.ceil(maxHealth * track.bleedRate))
+        SetEntityHealth(ped, newHealth)
+        mem.lastHealth = newHealth     -- kein "Treffer" durch Blutverlust
+    end
+
+    SendBlood(animal, mem, now)
+    return true
 end
 
 --- Entscheidet, ob ein aggressives Tier angreift oder flüchtet.
@@ -254,9 +319,19 @@ local function ControlAnimal(ped, animal)
     end
     mem.lastHealth = health
 
+    -- Angeschossen: Blutverlust & Schweißfährte
+    local bleeding = HandleBleeding(ped, animal, mem, coords, health, now)
+    local maxHealth = GetEntityMaxHealth(ped)
+    local badlyHurt = bleeding and maxHealth > 0 and health / maxHealth <= Config.Tracking.restThreshold
+
     local mode = mem.mode or 'wander'
 
-    if mode == 'wander' then
+    if mode == 'rest' then
+        -- Im Wundbett: nur bei unmittelbarer Gefahr erneut flüchten
+        local threatId = FindNearestPlayer(ped, coords, (cfg.detection or 30.0) * 0.4, true)
+        if threatId then StartFlee(ped, animal, threatId) end
+
+    elseif mode == 'wander' then
         if agg then
             local targetId = FindNearestPlayer(ped, coords, agg.aggroRadius, false)
             if targetId and now >= mem.nextRoll then
@@ -276,7 +351,10 @@ local function ControlAnimal(ped, animal)
         end
 
     elseif mode == 'flee' then
-        if now - mem.since > (cfg.fleeTime or 20) * 1000 then
+        if badlyHurt and now - mem.since > 15000 then
+            -- Schwer verletzte Tiere legen sich nach kurzer Flucht ins Wundbett
+            SetMode(ped, animal, 'rest', nil)
+        elseif now - mem.since > (cfg.fleeTime or 20) * 1000 then
             local threatId = FindNearestPlayer(ped, coords, (cfg.detection or 30.0) * 0.8, true)
             if threatId then
                 mem.since = now     -- Gefahr noch in der Nähe → weiter flüchten
@@ -343,6 +421,7 @@ CreateThread(function()
                         cfg   = Config.Animals[info.type],
                         zone  = info.zone,
                         home  = ToVector(info.home),
+                        homeRadius = info.homeRadius,
                     }
                 end
             end
@@ -452,9 +531,10 @@ local function FindGround(x, y, refZ)
     return nil
 end
 
-RegisterNetEvent('wr_hunting:client:findSpawn', function(requestId, zoneIndex, count, minDist, maxDist)
+RegisterNetEvent('wr_hunting:client:findSpawn', function(requestId, zoneIndex, count, minDist, maxDist, customOrigin)
     local zone = zoneIndex and Config.Zones[zoneIndex]
-    local origin = GetEntityCoords(PlayerPedId())
+    -- customOrigin: z.B. ein Köder, um den herum gesucht wird
+    local origin = customOrigin or GetEntityCoords(PlayerPedId())
     minDist = minDist or Config.Spawning.minDistance
     maxDist = maxDist or Config.Spawning.maxDistance
 

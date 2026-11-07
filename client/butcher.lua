@@ -77,12 +77,56 @@ local function Butcher(carcass, animal)
     Notify(message or L('butcher_failed'), success and 'success' or 'error')
 end
 
+--- Polizei: Kadaver auf Wilderei-Spuren untersuchen
+local function Inspect(carcass, animal)
+    FacePosition(GetEntityCoords(carcass))
+    local ped = PlayerPedId()
+    if LoadAnimDict(Config.Butchering.anim.dict) then
+        TaskPlayAnim(ped, Config.Butchering.anim.dict, Config.Butchering.anim.name, 3.0, 3.0, -1, 1, 0.0, false, false, false)
+    end
+    local completed = Progress(L('inspect_progress'), 4000)
+    ClearPedTasks(ped)
+    if not completed then return end
+
+    local ok, info = Callback('wr_hunting:police:inspect', animal.netId)
+    if not ok then
+        Notify(info or L('carcass_invalid'), 'error')
+        return
+    end
+
+    local elements = {
+        { label = L('inspect_species', info.label), disabled = true },
+        { label = L('inspect_time', info.minutes), disabled = true },
+        { label = L('inspect_weapon', info.weapon), disabled = true },
+        { label = L('inspect_quality', info.quality), disabled = true },
+    }
+    if info.tracked then
+        elements[#elements + 1] = { label = L('inspect_tracked'), disabled = true }
+    end
+    if #info.findings == 0 then
+        elements[#elements + 1] = { label = L('inspect_no_findings'), disabled = true }
+    else
+        for _, finding in ipairs(info.findings) do
+            elements[#elements + 1] = { label = L('inspect_finding', finding), disabled = true }
+        end
+    end
+    OpenMenu('wr_hunting_inspect', L('inspect_title'), elements, function() end)
+end
+
 RegisterInteraction('butcher', function(coords)
     local carcass, dist, animal = GetNearestCarcass(coords)
     if not carcass then return nil end
-    return {
+    local result = {
         dist   = dist,
         text   = L('butcher_prompt', animal.cfg.label),
         action = function() Butcher(carcass, animal) end,
     }
+    if Config.Police.inspection.enabled and IsPoliceClient() then
+        result.secondary = {
+            key    = Config.Police.inspection.key,
+            text   = L('inspect_prompt'),
+            action = function() Inspect(carcass, animal) end,
+        }
+    end
+    return result
 end)

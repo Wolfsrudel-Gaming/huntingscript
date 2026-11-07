@@ -148,6 +148,8 @@ ESX.RegisterServerCallback('wr_hunting:cook:finish', function(src, cb)
         Inventory.Add(src, job.item, 1)
         return cb(false, L('inventory_full'))
     end
+    IncrementStat(src, 'cooked', 1)
+    AddXP(src, Config.Progression.xp.cook or 0)
     cb(true)
 end)
 

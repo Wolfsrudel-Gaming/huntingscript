@@ -101,6 +101,54 @@ function IsNightHour(hour)
     return GetDayPeriod(hour) == 'night'
 end
 
+--[[ Schonzeiten ]]
+
+---@param month number 1-12 (reales Serverdatum)
+function IsClosedSeason(animalType, month)
+    if not Config.Seasons.enabled then return false end
+    local season = Config.Seasons.animals[animalType]
+    if not season or not season.closedMonths then return false end
+    return TableContains(season.closedMonths, tonumber(month))
+end
+
+function GetDailyLimit(animalType)
+    if not Config.Seasons.enabled then return 0 end
+    local season = Config.Seasons.animals[animalType]
+    return season and season.dailyLimit or 0
+end
+
+--[[ Erfahrung ]]
+
+function GetLevelFromXP(xp)
+    local level = 1
+    for i, threshold in ipairs(Config.Progression.levels) do
+        if (xp or 0) >= threshold then level = i end
+    end
+    return level
+end
+
+--- Prozentualer Bonus einer Stufe (Stufe 1 = 0).
+function GetPerkValue(level, perPerLevel, max)
+    local value = math.max(0, (tonumber(level) or 1) - 1) * perPerLevel
+    if max then value = math.min(value, max) end
+    return value
+end
+
+--[[ Wind ]]
+
+--- GTA-Heading (0 = Nord, 90 = West) → Richtungsvektor (x, y)
+function HeadingToVector(heading)
+    local r = math.rad(heading)
+    return -math.sin(r), math.cos(r)
+end
+
+--- Locale-Schlüssel der Himmelsrichtung, aus der der Wind kommt.
+function CompassKey(heading)
+    local keys = { 'n', 'nw', 'w', 'sw', 's', 'se', 'e', 'ne' }
+    local index = math.floor(((heading % 360.0) + 22.5) / 45.0) % 8
+    return 'compass_' .. keys[index + 1]
+end
+
 function Round(value, decimals)
     local m = 10 ^ (decimals or 0)
     return math.floor(value * m + 0.5) / m

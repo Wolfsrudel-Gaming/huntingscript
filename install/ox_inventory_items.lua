@@ -32,5 +32,9 @@
 ['trophy_boar']    = { label = 'Wildschweinkopf (Trophäe)',    weight = 4000, stack = false, close = true, consume = 0 },
 ['trophy_coyote']  = { label = 'Kojotenkopf (Trophäe)',        weight = 3000, stack = false, close = true, consume = 0 },
 
--- Sonstiges (benutzbar: Lagerfeuer aufbauen)
-['campfire_kit']   = { label = 'Lagerfeuer-Set',               weight = 3000, stack = true, close = true, consume = 0 },
+-- Ausrüstung (alle benutzbar)
+['campfire_kit']   = { label = 'Lagerfeuer-Set',               weight = 3000, stack = true,  close = true, consume = 0 },
+['bait_corn']      = { label = 'Kirrmais (Köder)',             weight = 2000, stack = true,  close = true, consume = 0 },
+['bait_saltlick']  = { label = 'Salzleckstein (Köder)',        weight = 2000, stack = true,  close = true, consume = 0 },
+['hunting_blind']  = { label = 'Tarnzelt (Ansitz)',            weight = 6000, stack = false, close = true, consume = 0 },
+['binoculars']     = { label = 'Fernglas',                     weight = 700,  stack = false, close = true, consume = 0 },

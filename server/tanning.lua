@@ -145,6 +145,8 @@ ESX.RegisterServerCallback('wr_hunting:tanning:collect', function(src, cb, rackI
         MySQL.update.await('DELETE FROM `hunting_tanning` WHERE `rack` = ? AND `slot` = ?', { rack.id, slot })
     end
 
+    IncrementStat(src, 'tanned', job.amount)
+    AddXP(src, (Config.Progression.xp.tan or 0) * job.amount)
     cb(true, L('tanning_collected', job.amount, Inventory.Label(job.output)))
 end)
 

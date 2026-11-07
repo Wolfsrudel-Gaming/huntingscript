@@ -266,9 +266,17 @@ Config.Police = {
         enabled           = true,
         cooldown          = 45,     -- Sekunden pro Spieler zwischen zwei Meldungen
         nightBonus        = 15,     -- +% bei Nacht (Wilderei-Verdacht)
-        outsideZoneChance = 100,    -- Tier außerhalb eines Reviers erlegt
-        protectedChance   = 100,    -- Geschützte Art
-        noLicenseChance   = 100,    -- Ohne Jagdschein (siehe Config.License)
+        outsideZoneChance  = 100,   -- Tier außerhalb eines Reviers erlegt
+        protectedChance    = 100,   -- Geschützte Art
+        noLicenseChance    = 100,   -- Ohne gültigen Jagdschein (siehe Config.License)
+        closedSeasonChance = 100,   -- Abschuss in der Schonzeit (siehe Config.Seasons)
+        overLimitChance    = 100,   -- Tageskontingent überschritten
+    },
+
+    -- Polizei kann Kadaver untersuchen (Todeszeit, Waffe, Verstöße) und Jagdscheine prüfen
+    inspection = {
+        enabled = true,
+        key     = 47,               -- G
     },
 
     -- Jagdwaffe außerhalb eines Reviers gezogen
@@ -301,10 +309,157 @@ Config.Police = {
     end,
 }
 
--- Optionaler Jagdschein über esx_license
+--[[ =====================================================================
+    JAGDSCHEIN
+    provider = 'builtin'     → eigener Jagdschein, beim Händler (license = true) kaufbar,
+                               gültig für durationDays Echtzeit-Tage
+    provider = 'esx_license' → Prüfung über esx_license (type)
+    Wer ohne gültigen Schein jagt, wird bei jedem Abschuss gemeldet und erhält keine Erfahrung.
+===================================================================== ]]
 Config.License = {
-    enabled = false,
-    type    = 'hunting',
+    enabled      = true,
+    provider     = 'builtin',
+    type         = 'hunting',   -- nur für esx_license
+    price        = 2500,
+    durationDays = 7,
+    account      = 'bank',      -- 'money' | 'bank'
+}
+
+--[[ =====================================================================
+    SCHONZEITEN & ABSCHUSSKONTINGENT
+    closedMonths: Monate (1-12, reales Serverdatum), in denen die Art nicht bejagt werden darf
+    dailyLimit  : Abschüsse pro Spieler und Tag (0 = unbegrenzt)
+    Verstöße werden gemeldet (Config.Police.kill.*Chance) und geben keine Erfahrung.
+===================================================================== ]]
+Config.Seasons = {
+    enabled = true,
+    animals = {
+        deer   = { closedMonths = { 3, 4, 5 }, dailyLimit = 3 },    -- Setzzeit im Frühjahr
+        boar   = { closedMonths = {},          dailyLimit = 5 },    -- Schwarzwild ganzjährig
+        coyote = { closedMonths = {},          dailyLimit = 0 },    -- Raubwild ganzjährig
+        rabbit = { closedMonths = {},          dailyLimit = 6 },
+    },
+}
+
+--[[ =====================================================================
+    WIND & WITTERUNG
+    Der Wind wird serverweit synchronisiert und dreht langsam. Steht der Jäger
+    so, dass der Wind seine Witterung zum Tier trägt, bemerkt es ihn deutlich
+    früher. "Unter Wind" (Wind kommt vom Tier) ist er schwerer zu bemerken.
+===================================================================== ]]
+Config.Wind = {
+    enabled          = true,
+    changeInterval   = 240,     -- Sekunden zwischen Winddrehungen
+    maxShift         = 40.0,    -- Maximale Drehung pro Änderung (Grad)
+    scentMultiplier  = 1.7,     -- Tier steht unter dem Wind des Jägers
+    coverMultiplier  = 0.6,     -- Jäger steht unter dem Wind des Tieres
+    hud              = true,    -- Windanzeige in den Revieren
+}
+
+--[[ =====================================================================
+    SCHWEISSFÄHRTE & NACHSUCHE
+    Angeschossene Tiere bluten, hinterlassen eine für alle sichtbare Blutspur
+    und verenden bei schweren Treffern nach einiger Zeit. Der Abschuss wird
+    dem Schützen zugeschrieben – er muss das Tier aber erst finden.
+===================================================================== ]]
+Config.Tracking = {
+    enabled          = true,
+    bleedThreshold   = 0.7,     -- Unter 70 % Leben blutet das Tier
+    bleedInterval    = 3000,    -- ms zwischen zwei Blutverlust-Ticks
+    bleedRate        = 0.025,   -- Anteil der Max-Lebenspunkte pro Tick
+    restThreshold    = 0.35,    -- Schwer verletzte Tiere legen sich nach der Flucht ins Wundbett
+    dropDistance     = 2.5,     -- Meter zwischen zwei Blutstropfen
+    decalLifetime    = 900,     -- Sekunden, die Blutspuren sichtbar bleiben
+    maxDecals        = 200,     -- Maximale Blutspuren pro Client
+    attributionTime  = 900,     -- Sekunden, in denen ein verendetes Tier dem Schützen zugeordnet wird
+}
+
+--[[ =====================================================================
+    KÖDER (KIRRUNG / SALZLECKE)
+    Ausgelegte Köder locken nach einiger Zeit passende Tiere an.
+===================================================================== ]]
+Config.Baits = {
+    onlyInZones     = true,     -- Nur innerhalb der Jagdreviere auslegbar
+    maxPerPlayer    = 2,
+    placeTime       = 5,
+    minDistance     = 25.0,     -- Mindestabstand zwischen zwei Ködern
+    renderDistance  = 120.0,
+    items = {
+        bait_corn = {
+            model        = 'prop_feed_sack_01',
+            animals      = { boar = 85, rabbit = 15 },
+            duration     = 1500,        -- Sekunden, die der Köder liegt
+            attractDelay = { 60, 180 }, -- Sekunden bis zum nächsten angelockten Tier
+            maxAnimals   = 3,           -- Tiere pro Köder
+            spawnDistance = { 60.0, 110.0 },
+            homeRadius   = 10.0,        -- Tiere bleiben in diesem Radius um den Köder
+        },
+        bait_saltlick = {
+            model        = 'prop_feeder1',
+            animals      = { deer = 100 },
+            duration     = 1800,
+            attractDelay = { 90, 240 },
+            maxAnimals   = 2,
+            spawnDistance = { 70.0, 120.0 },
+            homeRadius   = 12.0,
+        },
+    },
+}
+
+--[[ =====================================================================
+    ANSITZ / TARNZELT
+    Wer sich im (eigenen oder fremden) Ansitz aufhält, wird von Tieren kaum bemerkt.
+    fixed: feste Hochsitze in der Map (nur Tarnwirkung, kein Prop)
+===================================================================== ]]
+Config.Blinds = {
+    item              = 'hunting_blind',
+    model             = 'prop_hunterhide',
+    radius            = 2.5,
+    stealthMultiplier = 0.35,
+    lifetime          = 7200,   -- Sekunden, danach wird das Tarnzelt automatisch abgebaut (Item zurück)
+    maxPerPlayer      = 1,
+    placeTime         = 10,
+    renderDistance    = 150.0,
+    fixed = {
+        -- { coords = vector3(-1340.0, 4840.0, 140.0), radius = 3.0 },
+    },
+}
+
+--[[ =====================================================================
+    FERNGLAS
+===================================================================== ]]
+Config.Binoculars = {
+    item      = 'binoculars',
+    fovMax    = 45.0,
+    fovMin    = 4.0,
+    zoomSpeed = 4.0,
+    maxRange  = 400.0,          -- Wild bis zu dieser Entfernung wird erkannt
+}
+
+--[[ =====================================================================
+    JÄGER-ERFAHRUNG
+    Erfahrung gibt es nur für legale Abschüsse. Höhere Stufen nehmen schneller
+    aus, bekommen öfter zusätzliches Fleisch und werden später bemerkt.
+    Die Trophäen-Chance (1 zu 250) bleibt davon unberührt.
+===================================================================== ]]
+Config.Progression = {
+    enabled = true,
+    levels  = { 0, 100, 250, 500, 900, 1400, 2000, 2800, 3800, 5000 },   -- XP-Schwellen für Stufe 1-10
+    xp = {
+        kill    = { deer = 20, boar = 25, coyote = 15, rabbit = 8 },
+        perfect = 15,   -- Bonus für sauberen Kopf-/Halsschuss
+        butcher = 5,
+        tracked = 15,   -- Erfolgreiche Nachsuche (eigenes verendetes Tier ausgenommen)
+        tan     = 5,
+        cook    = 1,
+    },
+    perks = {
+        butcherSpeed    = 0.04, -- -4 % Ausnehm-Zeit pro Stufe
+        maxButcherSpeed = 0.35,
+        meatChance      = 5,    -- +5 % Chance pro Stufe auf 1 zusätzliches Fleisch
+        stealth         = 0.02, -- -2 % Wahrnehmungsradius pro Stufe
+        maxStealth      = 0.2,
+    },
 }
 
 --[[ =====================================================================
@@ -438,7 +593,10 @@ Config.Trophies = {
 }
 
 --[[ =====================================================================
-    HÄNDLER (Verkauf von Fleisch, Fellen, Leder und Trophäen)
+    HÄNDLER
+    prices  : Ankauf von Fleisch, Fellen, Leder und Trophäen
+    shop    : Verkauf von Jagdausrüstung
+    license : true = Jagdschein (builtin) kann hier gekauft/verlängert werden
 ===================================================================== ]]
 Config.Traders = {
     {
@@ -446,7 +604,15 @@ Config.Traders = {
         ped     = 's_m_m_ammucountry',
         coords  = vector4(-769.2, 5595.6, 33.5, 200.0),
         account = 'money',
+        license = true,
         blip    = { enabled = true, sprite = 141, colour = 21, scale = 0.8 },
+        shop    = {
+            { item = 'campfire_kit',  price = 150 },
+            { item = 'bait_corn',     price = 90 },
+            { item = 'bait_saltlick', price = 140 },
+            { item = 'hunting_blind', price = 950 },
+            { item = 'binoculars',    price = 450 },
+        },
         prices  = {
             meat_deer = 35, meat_boar = 30, meat_coyote = 15, meat_rabbit = 12,
             pelt_deer = 90, pelt_boar = 70, pelt_coyote = 60, pelt_rabbit = 25,

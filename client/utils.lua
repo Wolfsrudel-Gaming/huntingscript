@@ -303,6 +303,84 @@ function GetGroundZ(x, y, z)
     return z
 end
 
+--[[ Lokale Welt-Props (Köder, Tarnzelte, ...), vom Server synchronisiert ]]
+
+--- Erstellt eine Prop-Sammlung, deren Einträge ({ id, coords, heading?, bucket, model })
+--- in Reichweite als lokale, eingefrorene Objekte dargestellt werden.
+function CreatePropSet(renderDistance)
+    local set = { items = {}, rendered = {} }
+
+    local function Despawn(id)
+        local obj = set.rendered[id]
+        if obj and DoesEntityExist(obj) then DeleteEntity(obj) end
+        set.rendered[id] = nil
+    end
+
+    function set.Sync(list)
+        for id in pairs(set.rendered) do Despawn(id) end
+        set.items = {}
+        for _, item in ipairs(list or {}) do set.items[item.id] = item end
+    end
+
+    function set.Add(item)
+        set.items[item.id] = item
+    end
+
+    function set.Remove(id)
+        set.items[id] = nil
+        Despawn(id)
+    end
+
+    function set.Clear()
+        for id in pairs(set.rendered) do Despawn(id) end
+    end
+
+    CreateThread(function()
+        while true do
+            local coords = GetEntityCoords(PlayerPedId())
+            for id, item in pairs(set.items) do
+                local inRange = item.bucket == CurrentBucket and #(coords - item.coords) <= renderDistance
+                if inRange and set.rendered[id] == nil then
+                    local hash = item.model and LoadModel(item.model)
+                    if hash then
+                        local z = GetGroundZ(item.coords.x, item.coords.y, item.coords.z)
+                        local obj = CreateObject(hash, item.coords.x, item.coords.y, z, false, false, false)
+                        SetEntityHeading(obj, item.heading or 0.0)
+                        PlaceObjectOnGroundProperly(obj)
+                        FreezeEntityPosition(obj, true)
+                        SetModelAsNoLongerNeeded(hash)
+                        set.rendered[id] = obj
+                    else
+                        set.rendered[id] = false
+                    end
+                elseif not inRange and set.rendered[id] ~= nil then
+                    Despawn(id)
+                end
+            end
+            Wait(1500)
+        end
+    end)
+
+    AddEventHandler('onResourceStop', function(res)
+        if res == GetCurrentResourceName() then set.Clear() end
+    end)
+
+    return set
+end
+
+--- Prüft, ob an der Position vor dem Spieler etwas aufgestellt werden kann.
+---@return vector3|nil Bodenposition
+function GetPlacementSpot(distance)
+    local ped = PlayerPedId()
+    if IsPedInAnyVehicle(ped, false) or IsEntityInWater(ped) then return nil end
+    local pos = GetOffsetFromEntityInWorldCoords(ped, 0.0, distance or 1.2, 0.0)
+    local found, groundZ = GetGroundZFor_3dCoord(pos.x, pos.y, pos.z + 1.0, false)
+    if not found or math.abs(groundZ - pos.z) > 2.0 then return nil end
+    local isWater = GetWaterHeight(pos.x, pos.y, groundZ)
+    if isWater then return nil end
+    return vector3(pos.x, pos.y, groundZ)
+end
+
 AddEventHandler('onResourceStop', function(res)
     if res ~= GetCurrentResourceName() then return end
     for obj in pairs(spawnedProps) do

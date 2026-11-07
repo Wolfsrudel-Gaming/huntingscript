@@ -53,7 +53,9 @@ CreateThread(function()
     end
 end)
 
-local function OpenTrader(index)
+local OpenTrader
+
+local function OpenSellMenu(index)
     local trader = Config.Traders[index]
     local ok, offers = Callback('wr_hunting:trader:getOffers', index)
     if not ok or not offers or #offers == 0 then
@@ -71,10 +73,80 @@ local function OpenTrader(index)
         }
     end
 
-    OpenMenu('wr_hunting_trader', trader.label, elements, function(selected)
+    OpenMenu('wr_hunting_trader_sell', trader.label, elements, function(selected)
         CreateThread(function()
             local success, msg = Callback('wr_hunting:trader:sell', index, selected.item, selected.count)
             Notify(msg, success and 'success' or 'error')
+        end)
+    end)
+end
+
+local function OpenShopMenu(index, shop)
+    local trader = Config.Traders[index]
+    local elements = {}
+    for _, entry in ipairs(shop) do
+        elements[#elements + 1] = {
+            label       = entry.label,
+            description = L('shop_price', entry.price),
+            item        = entry.item,
+        }
+    end
+
+    OpenMenu('wr_hunting_trader_shop', trader.label, elements, function(selected)
+        CreateThread(function()
+            local success, msg = Callback('wr_hunting:trader:buy', index, selected.item, 1)
+            Notify(msg, success and 'success' or 'error')
+            if success then OpenShopMenu(index, shop) end
+        end)
+    end)
+end
+
+local function BuyLicense(index)
+    local success, msg = Callback('wr_hunting:trader:buyLicense', index)
+    Notify(msg, success and 'success' or 'error')
+end
+
+OpenTrader = function(index)
+    local trader = Config.Traders[index]
+    local ok, info = Callback('wr_hunting:trader:getInfo', index)
+    if not ok or not info then
+        Notify(L('too_far'), 'error')
+        return
+    end
+
+    local elements = {}
+    if info.sells then
+        elements[#elements + 1] = { label = L('trader_menu_sell'), description = L('trader_menu_sell_desc'), action = 'sell' }
+    end
+    if #info.shop > 0 then
+        elements[#elements + 1] = { label = L('trader_menu_shop'), description = L('trader_menu_shop_desc'), action = 'shop' }
+    end
+    if info.license then
+        elements[#elements + 1] = {
+            label       = info.license.valid and L('trader_menu_license_extend') or L('trader_menu_license_buy'),
+            description = L('trader_menu_license_desc', info.license.price, info.license.days, info.license.status),
+            action      = 'license',
+        }
+    end
+
+    if #elements == 0 then
+        Notify(L('trader_nothing'), 'error')
+        return
+    end
+    if #elements == 1 and elements[1].action == 'sell' then
+        OpenSellMenu(index)
+        return
+    end
+
+    OpenMenu('wr_hunting_trader', trader.label, elements, function(selected)
+        CreateThread(function()
+            if selected.action == 'sell' then
+                OpenSellMenu(index)
+            elseif selected.action == 'shop' then
+                OpenShopMenu(index, info.shop)
+            elseif selected.action == 'license' then
+                BuyLicense(index)
+            end
         end)
     end)
 end

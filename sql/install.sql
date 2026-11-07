@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS `hunting_tanning` (
     KEY `identifier` (`identifier`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `hunting_players` (
+    `identifier`    VARCHAR(64) NOT NULL,
+    `xp`            INT NOT NULL DEFAULT 0,
+    `license_until` INT NOT NULL DEFAULT 0,
+    `stats`         LONGTEXT NULL,
+    `daily`         LONGTEXT NULL,
+    PRIMARY KEY (`identifier`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO `items` (`name`, `label`, `weight`, `rare`, `can_remove`) VALUES
     -- Rohes Fleisch
     ('meat_deer',      'Rohes Hirschfleisch',          1, 0, 1),
@@ -59,5 +68,9 @@ INSERT IGNORE INTO `items` (`name`, `label`, `weight`, `rare`, `can_remove`) VAL
     ('trophy_deer',    'Hirschkopf (Trophäe)',         4, 1, 1),
     ('trophy_boar',    'Wildschweinkopf (Trophäe)',    4, 1, 1),
     ('trophy_coyote',  'Kojotenkopf (Trophäe)',        3, 1, 1),
-    -- Sonstiges
-    ('campfire_kit',   'Lagerfeuer-Set',               3, 0, 1);
+    -- Ausrüstung
+    ('campfire_kit',   'Lagerfeuer-Set',               3, 0, 1),
+    ('bait_corn',      'Kirrmais (Köder)',             2, 0, 1),
+    ('bait_saltlick',  'Salzleckstein (Köder)',        2, 0, 1),
+    ('hunting_blind',  'Tarnzelt (Ansitz)',            5, 0, 1),
+    ('binoculars',     'Fernglas',                     1, 0, 1);

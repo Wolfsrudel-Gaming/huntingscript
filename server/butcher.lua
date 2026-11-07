@@ -40,7 +40,10 @@ ESX.RegisterServerCallback('wr_hunting:butcher:start', function(src, cb, netId)
         return cb(false, L('inventory_full'))
     end
 
-    local duration = (cfg.butcherTime or 10) * 1000
+    local level = GetHunterLevel(src)
+    local perks = Config.Progression.perks
+    local speedBonus = Config.Progression.enabled and GetPerkValue(level, perks.butcherSpeed, perks.maxButcherSpeed) or 0
+    local duration = math.floor((cfg.butcherTime or 10) * 1000 * (1.0 - speedBonus))
     animal.lock = src
     animal.lockAt = GetGameTimer()
     animal.lockDuration = duration
@@ -82,6 +85,11 @@ ESX.RegisterServerCallback('wr_hunting:butcher:finish', function(src, cb, netId)
     if loot.meat then
         local amount = math.random(loot.meat.min, loot.meat.max) + (quality.meatBonus or 0)
         amount = math.max(amount, loot.meat.min > 0 and 1 or 0)
+        -- Erfahrene Jäger verwerten mehr
+        if Config.Progression.enabled and animal.quality ~= 'ruined'
+            and math.random(100) <= GetPerkValue(GetHunterLevel(src), Config.Progression.perks.meatChance) then
+            amount = amount + 1
+        end
         if amount > 0 and Inventory.Add(src, loot.meat.item, amount) then
             received[#received + 1] = ('%dx %s'):format(amount, Inventory.Label(loot.meat.item))
         end
@@ -101,9 +109,21 @@ ESX.RegisterServerCallback('wr_hunting:butcher:finish', function(src, cb, netId)
     if loot.trophy and math.random(1, Config.Butchering.trophyChance) == 1 then
         if Inventory.CanCarry(src, loot.trophy, 1) and Inventory.Add(src, loot.trophy, 1) then
             trophy = true
+            IncrementStat(src, 'trophies', 1)
             received[#received + 1] = ('1x %s'):format(Inventory.Label(loot.trophy))
             print(('[wr_hunting] %s (%s) hat eine Trophäe erhalten: %s'):format(GetPlayerName(src), GetIdentifier(src) or '?', loot.trophy))
         end
+    end
+
+    -- Erfahrung: nur für legal erlegtes Wild
+    if not animal.illegal then
+        local xp = Config.Progression.xp.butcher or 0
+        if animal.tracked and animal.killer == src then
+            xp = xp + (Config.Progression.xp.tracked or 0)
+            IncrementStat(src, 'tracked', 1)
+            NotifyPlayer(src, L('tracking_success'), 'success')
+        end
+        AddXP(src, xp)
     end
 
     -- Kadaver entfernen

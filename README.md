@@ -18,7 +18,16 @@ danach (Ausnehmen, Gerben, Grillen, Essen, Verkaufen, Trophäen) passiert ebenfa
 | **Gerben** | Rohe Felle in einen **Gerbrahmen** spannen; nach Ablauf der Echtzeit (läuft auch offline/bei Neustart weiter) als gegerbtes Fell abholen. |
 | **Grillen** | Fleisch auf **jedem Grill der Spielwelt** (`prop_bbq_*` u. a.), an festen Feuerstellen oder an einem selbst gebauten **Lagerfeuer** grillen. |
 | **Essen** | Gegrilltes Fleisch essen (Hunger über esx_status + etwas Heilung). Rohes Fleisch ist essbar – mit Risiko, dass einem schlecht wird. |
-| **Händler** | Optionale Händler-NPCs (Wildhändler, Schlachthof) zum Verkauf. |
+| **Händler & Ausrüstung** | Händler-NPCs (Wildhändler, Schlachthof) kaufen Beute an. Der Wildhändler verkauft Ausrüstung (Köder, Tarnzelt, Fernglas, Lagerfeuer-Set) und stellt Jagdscheine aus. |
+| **Jagdschein** | Eingebauter Jagdschein (Echtzeit-Tage gültig, beim Wildhändler kaufbar/verlängerbar) oder Anbindung an `esx_license`. `/jagdschein` zeigt ihn der nächsten Person, die Polizei prüft mit `/jagdscheinpruefen`. Ohne Schein ist jeder Abschuss Wilderei. |
+| **Schonzeiten & Kontingent** | Pro Tierart gesperrte Monate (reales Serverdatum) und ein Tageskontingent pro Spieler. Verstöße werden gemeldet, der Jäger wird gewarnt. `/jagdzeiten` zeigt den aktuellen Stand. |
+| **Wind & Witterung** | Serverweit synchronisierter, langsam drehender Wind. Trägt der Wind die Witterung des Jägers zum Tier, bemerkt es ihn viel früher; „unter Wind“ kommt man näher heran. Windanzeige in den Revieren. |
+| **Schweißfährte & Nachsuche** | Angeschossene Tiere bluten, hinterlassen eine für alle sichtbare Blutspur (Anschuss mit Blutlache), legen sich schwer verletzt ins Wundbett und verenden schließlich. Der Abschuss wird dem Schützen zugeordnet – finden muss er das Tier selbst. |
+| **Köder** | Kirrmais (lockt Wildschweine) und Salzleckstein (lockt Hirsche) im Revier auslegen; nach einiger Zeit zieht Wild aus der Umgebung heran. |
+| **Ansitz / Tarnzelt** | Tarnzelt aufstellen – wer darin sitzt, wird von Tieren kaum bemerkt. Optional feste Hochsitze per Config. |
+| **Fernglas** | Wild ansprechen: Art, Entfernung, Zustand (ruhig, flüchtig, verwundet …), Jagd-/Schonzeit und Windrichtung. |
+| **Jäger-Erfahrung** | Erfahrung für legale Abschüsse, saubere Schüsse, Nachsuchen, Ausnehmen, Gerben und Grillen. Höhere Stufen nehmen schneller aus, bekommen öfter mehr Fleisch und werden später bemerkt. `/jagdstatistik` zeigt Stufe und Statistik. |
+| **Polizei-Untersuchung** | Polizisten können Kadaver untersuchen (Taste `G`): Tierart, Todeszeitpunkt, Todesursache, Zustand und Verstöße (Schonzeit, außerhalb des Reviers, Kontingent). |
 
 ## Voraussetzungen
 
@@ -40,7 +49,7 @@ Funktioniert mit `sv_entityLockdown strict`, da alle Tiere serverseitig erstellt
    ```cfg
    ensure wr_hunting
    ```
-4. Die Tabellen `hunting_trophies` und `hunting_tanning` werden beim ersten Start automatisch erstellt.
+4. Die Tabellen `hunting_trophies`, `hunting_tanning` und `hunting_players` werden beim ersten Start automatisch erstellt.
 5. Koordinaten in `config.lua` (Reviere, Gerbrahmen, Feuerstelle, Händler) an euren Server anpassen –
    besonders, wenn ihr eigene MLOs oder Map-Änderungen nutzt.
 
@@ -54,23 +63,33 @@ Funktioniert mit `sv_entityLockdown strict`, da alle Tiere serverseitig erstellt
 | `leather_deer`, `leather_boar`, `leather_coyote`, `leather_rabbit` | Gegerbtes Fell | – (Verkauf/Crafting) |
 | `trophy_deer`, `trophy_boar`, `trophy_coyote` | Tierkopf-Trophäe (1 : 250) | als Deko platzieren |
 | `campfire_kit` | Lagerfeuer-Set | Lagerfeuer bauen |
+| `bait_corn` | Kirrmais – lockt Wildschweine | im Revier auslegen |
+| `bait_saltlick` | Salzleckstein – lockt Hirsche | im Revier auslegen |
+| `hunting_blind` | Tarnzelt (Ansitz) | aufstellen |
+| `binoculars` | Fernglas | benutzen |
 
 Zum Ausnehmen wird ein Messer benötigt (`WEAPON_KNIFE`, `WEAPON_SWITCHBLADE`, `WEAPON_DAGGER`,
 `WEAPON_MACHETE` – erweiterbar über `Config.Butchering.knifeWeapons` / `knifeItems`).
-Das `campfire_kit` ist bewusst nirgends eingebaut – vergebt es über einen Shop eurer Wahl.
+Die Ausrüstung gibt es beim Wildhändler (`Config.Traders[x].shop`).
 
 ## Steuerung
 
 | Aktion | Taste |
 |---|---|
-| Interagieren (Ausnehmen, Gerbrahmen, Grill, Händler, Trophäe abnehmen) | `E` |
+| Interagieren (Ausnehmen, Gerbrahmen, Grill, Händler, Trophäe abnehmen, Tarnzelt abbauen) | `E` |
+| Kadaver untersuchen (nur Polizei) | `G` |
 | Fortschritt abbrechen | `X` |
 | Trophäe platzieren | `E` bestätigen, `Backspace`/Rechtsklick abbrechen, Mausrad/Pfeil ←→ drehen, Pfeil ↑↓ Höhe |
+| Fernglas | Maus umsehen, Mausrad zoomen, `E`/`Backspace` absetzen |
 
 ## Befehle
 
 | Befehl | Recht | Beschreibung |
 |---|---|---|
+| `/jagdschein` | alle | Eigenen Jagdschein anzeigen und der nächsten Person vorzeigen |
+| `/jagdscheinpruefen` | Polizei | Jagdschein der nächsten Person prüfen |
+| `/jagdstatistik` | alle | Jäger-Stufe, Erfahrung und Statistik |
+| `/jagdzeiten` | alle | Jagd-/Schonzeiten, heutige Abschüsse und Wind |
 | `/huntspawn <deer\|boar\|coyote\|rabbit>` | admin | Tier in der Nähe spawnen (Test) |
 | `/huntclear` | admin | Alle Jagdtiere entfernen |
 | `/trophaeentfernen` | Besitzer/admin | Nächstgelegene Trophäe entfernen (Besitzer bekommt das Item zurück) |
@@ -89,7 +108,15 @@ Alles befindet sich in `config.lua` und ist kommentiert.
 - **`Config.Tanning`** – Gerbrahmen-Standorte, Dauer je Fell, optionales Gerbmittel.
 - **`Config.Cooking` / `Config.Campfire` / `Config.Eating`** – Rezepte, Grill-Modelle, Feuerstellen, Hunger-Werte.
 - **`Config.Trophies`** – Modelle der Trophäen, Limit pro Spieler.
-- **`Config.Traders`** – Händler und Preise.
+- **`Config.Traders`** – Händler, Ankaufspreise, Ausrüstungs-Shop und Jagdschein-Verkauf.
+- **`Config.License`** – Jagdschein: eingebaut (Preis, Gültigkeit in Tagen) oder `esx_license`; `enabled = false` schaltet die Pflicht ab.
+- **`Config.Seasons`** – Schonzeit-Monate und Tageskontingent je Tierart.
+- **`Config.Wind`** – Winddrehung, Witterungs-Multiplikatoren, Anzeige.
+- **`Config.Tracking`** – Blutverlust, Blutspur, Wundbett, Zuordnungszeit.
+- **`Config.Baits`** – Köder, angelockte Tierarten, Dauer und Verzögerung.
+- **`Config.Blinds`** – Tarnzelt, Tarnwirkung, Lebensdauer, feste Hochsitze.
+- **`Config.Binoculars`** – Zoom und Reichweite des Fernglases.
+- **`Config.Progression`** – Stufen, Erfahrung pro Aktion und Boni.
 
 ### Externes Dispatch-System
 
@@ -113,11 +140,19 @@ damit die Trophäen auch ohne Zusatz-Downloads funktionieren.
 ### Jagdschein
 
 ```lua
-Config.License = { enabled = true, type = 'hunting' }
+Config.License = {
+    enabled      = true,
+    provider     = 'builtin',   -- oder 'esx_license'
+    type         = 'hunting',   -- Lizenztyp für esx_license
+    price        = 2500,
+    durationDays = 7,
+    account      = 'bank',
+}
 ```
 
-Benötigt `esx_license`. Wer ohne Schein jagt, wird bei jedem Abschuss gemeldet
-(`Config.Police.kill.noLicenseChance`).
+Mit `builtin` wird der Schein beim Wildhändler gekauft und in `hunting_players` gespeichert.
+Wer ohne gültigen Schein jagt, wird bei jedem Abschuss gemeldet (`Config.Police.kill.noLicenseChance`)
+und bekommt keine Erfahrung.
 
 ## Technische Details
 
@@ -131,6 +166,13 @@ Benötigt `esx_license`. Wer ohne Schein jagt, wird bei jedem Abschuss gemeldet
 - **Abschüsse:** Der Server prüft Tod, Entfernung und Todesursache (`GetPedCauseOfDeath`/`GetPedSourceOfDeath`),
   bevor Beute oder Meldungen entstehen. Alle Belohnungen (Ausnehmen, Gerben, Grillen, Verkauf) werden
   serverseitig validiert (Entfernung, Dauer, Sperren, Inventarplatz).
+- **Legalität:** Jeder Abschuss wird zentral bewertet (Jagdschein, Schonzeit, Kontingent, Revier, geschützte Art).
+  Illegale Abschüsse geben keine Erfahrung, werden in der Statistik gezählt und lösen sicher eine Meldung aus.
+- **Nachsuche:** Treffer ohne Todesfolge meldet der Schütze; der Server merkt sich den letzten Treffer. Der
+  Besitzer-Client lässt das Tier bluten und schickt Blutpunkte, die der Server an Spieler in der Nähe verteilt.
+  Verendet das Tier, wird es dem Schützen mit der Qualität seines Treffers zugeschrieben.
+- **Wind, Ansitz, Stufe:** Wind kommt über `GlobalState.huntWind`, Tarnung und Jäger-Stufe über Player-State-Bags
+  (`huntHidden`, `huntLevel`) – so kann der Client, der ein Tier steuert, die Wahrnehmung für jeden Spieler berechnen.
 
 ## Bekannte Einschränkungen
 
@@ -140,3 +182,7 @@ Benötigt `esx_license`. Wer ohne Schein jagt, wird bei jedem Abschuss gemeldet
   Kampfmodus stehen, läuft es automatisch aktiv auf das Ziel zu; der Schaden wird unabhängig davon
   über das Skript verteilt.
 - Grills der Spielwelt sind dem Server unbekannt; dort wird nur Dauer und Inventar geprüft.
+- Köder, Tarnzelte und Lagerfeuer sind nicht persistent und verschwinden bei einem Server-Neustart.
+  Ein abgelaufenes Tarnzelt kommt nur zurück ins Inventar, wenn der Besitzer online ist.
+- Der Jagdschein ist standardmäßig **Pflicht** (`Config.License.enabled = true`). Ohne gültigen Schein
+  wird jeder Abschuss gemeldet.

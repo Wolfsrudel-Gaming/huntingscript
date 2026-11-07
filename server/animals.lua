@@ -17,7 +17,7 @@ local nextRequestId = 0
 local pendingRequests = {}  -- [requestId] = { src, zone, expires, forceType }
 local zoneTimers = {}       -- [zoneIndex] = os.time() des nächsten Spawn-Versuchs
 
-local AI_MODES = { wander = true, flee = true, attack = true }
+local AI_MODES = { wander = true, flee = true, attack = true, rest = true }
 
 --[[ Hilfsfunktionen ]]
 
@@ -90,7 +90,9 @@ end
 
 --[[ Tiere erstellen ]]
 
-local function CreateAnimal(typeName, zoneIndex, x, y, z, heading)
+---@param opts table|nil { home = vector3, homeRadius = number, bait = id }
+local function CreateAnimal(typeName, zoneIndex, x, y, z, heading, opts)
+    opts = opts or {}
     local cfg = Config.Animals[typeName]
     if not cfg then return nil end
 
@@ -104,6 +106,7 @@ local function CreateAnimal(typeName, zoneIndex, x, y, z, heading)
         return nil
     end
 
+    local home = opts.home or vector3(x, y, z)
     nextAnimalId = nextAnimalId + 1
     local netId = NetworkGetNetworkIdFromEntity(entity)
     local animal = {
@@ -112,7 +115,8 @@ local function CreateAnimal(typeName, zoneIndex, x, y, z, heading)
         netId     = netId,
         type      = typeName,
         zone      = zoneIndex,
-        home      = vector3(x, y, z),
+        home      = home,
+        bait      = opts.bait,
         spawnedAt = os.time(),
         dead      = false,
     }
@@ -120,7 +124,12 @@ local function CreateAnimal(typeName, zoneIndex, x, y, z, heading)
     AnimalsByNet[netId] = animal
 
     local state = Entity(entity).state
-    state:set('huntAnimal', { type = typeName, zone = zoneIndex, home = { x = x, y = y, z = z } }, true)
+    state:set('huntAnimal', {
+        type       = typeName,
+        zone       = zoneIndex,
+        home       = { x = home.x, y = home.y, z = home.z },
+        homeRadius = opts.homeRadius,
+    }, true)
     state:set('huntAI', 'wander', true)
 
     DebugPrint(('Tier gespawnt: %s (netId %s) in Revier %s'):format(typeName, netId, tostring(zoneIndex)))
@@ -128,17 +137,24 @@ local function CreateAnimal(typeName, zoneIndex, x, y, z, heading)
 end
 
 --- Fragt bei einem Client gültige Spawnpunkte an.
-local function RequestSpawn(src, zoneIndex, count, opts)
+---@param opts table|nil { forceType, admin, minDist, maxDist, origin = vector3, homeRadius, bait, playerDist }
+function RequestSpawn(src, zoneIndex, count, opts)
     opts = opts or {}
     nextRequestId = nextRequestId + 1
     pendingRequests[nextRequestId] = {
-        src       = src,
-        zone      = zoneIndex,
-        expires   = os.time() + 15,
-        forceType = opts.forceType,
-        minDist   = opts.minDist or Config.Spawning.minDistance,
+        src        = src,
+        zone       = zoneIndex,
+        expires    = os.time() + 15,
+        forceType  = opts.forceType,
+        admin      = opts.admin == true,
+        maxDist    = opts.maxDist or Config.Spawning.maxDistance,
+        playerDist = opts.playerDist or (opts.minDist or Config.Spawning.minDistance) * 0.8,
+        origin     = opts.origin,
+        homeRadius = opts.homeRadius,
+        bait       = opts.bait,
     }
-    TriggerClientEvent('wr_hunting:client:findSpawn', src, nextRequestId, zoneIndex, count, opts.minDist, opts.maxDist)
+    TriggerClientEvent('wr_hunting:client:findSpawn', src, nextRequestId, zoneIndex, count,
+        opts.minDist, opts.maxDist, opts.origin)
 end
 
 RegisterNetEvent('wr_hunting:server:spawnPoints', function(requestId, points, hour)
@@ -150,25 +166,26 @@ RegisterNetEvent('wr_hunting:server:spawnPoints', function(requestId, points, ho
 
     local zone = req.zone and Config.Zones[req.zone]
     local players = GetPlayersWithCoords()
-    local requester = GetPlayerCoords(src)
-    if not requester then return end
+    local origin = req.origin or GetPlayerCoords(src)
+    if not origin then return end
 
     for _, p in ipairs(points) do
         local x, y, z, h = tonumber(p.x), tonumber(p.y), tonumber(p.z), tonumber(p.h) or 0.0
         if x and y and z then
             local point = vector3(x, y, z)
-            local valid = #(point - requester) <= Config.Spawning.maxDistance + 30.0
+            local valid = #(vector2(point.x, point.y) - vector2(origin.x, origin.y)) <= req.maxDist + 30.0
             if valid and zone and not IsPointInZone(zone, x, y) then valid = false end
-            if valid and not req.forceType then
+            if valid and not req.admin then
                 -- Nie direkt neben einem Spieler spawnen
                 for _, pl in ipairs(players) do
-                    if #(pl.coords - point) < req.minDist * 0.8 then valid = false break end
+                    if #(pl.coords - point) < req.playerDist then valid = false break end
                 end
             end
 
             if valid then
                 local zoneCount, total = CountAlive(req.zone)
-                if not req.forceType and (total >= Config.Spawning.maxGlobal or (zone and zoneCount >= zone.maxAnimals)) then
+                local zoneMax = zone and (zone.maxAnimals + (req.bait and 2 or 0)) or nil
+                if not req.admin and (total >= Config.Spawning.maxGlobal or (zoneMax and zoneCount >= zoneMax)) then
                     break
                 end
 
@@ -176,16 +193,18 @@ RegisterNetEvent('wr_hunting:server:spawnPoints', function(requestId, points, ho
                 local cfg = typeName and Config.Animals[typeName]
                 if cfg then
                     local groupSize = 1
-                    if not req.forceType and cfg.group then
+                    if not req.admin and not req.bait and cfg.group then
                         groupSize = math.random(cfg.group[1], cfg.group[2])
-                        if zone then groupSize = math.min(groupSize, zone.maxAnimals - zoneCount) end
+                        if zoneMax then groupSize = math.min(groupSize, zoneMax - zoneCount) end
                     end
+                    local spawnOpts = { homeRadius = req.homeRadius, bait = req.bait, home = req.bait and req.origin or nil }
                     for i = 1, math.max(1, groupSize) do
                         local ox, oy = 0.0, 0.0
                         if i > 1 then
                             ox, oy = math.random(-40, 40) / 10.0, math.random(-40, 40) / 10.0
                         end
-                        CreateAnimal(typeName, req.zone, x + ox, y + oy, z + (i > 1 and 0.5 or 0.0), h)
+                        local animal = CreateAnimal(typeName, req.zone, x + ox, y + oy, z + (i > 1 and 0.5 or 0.0), h, spawnOpts)
+                        if animal and req.bait then OnBaitAnimalSpawned(req.bait) end
                     end
                     -- Pro Anfrage nur eine Gruppe → natürliche Verteilung über Zeit
                     break
@@ -209,6 +228,7 @@ RegisterNetEvent('wr_hunting:server:setAI', function(netId, mode, target)
     if target and GetPlayerPing(target) <= 0 then target = nil end
     if mode == 'attack' and not target then return end
 
+    animal.seenAlive = true     -- Besitzer steuert das Tier → es lebt
     local state = Entity(animal.entity).state
     state:set('huntAI', mode, true)
     state:set('huntTarget', target, true)
@@ -228,7 +248,8 @@ RegisterNetEvent('wr_hunting:server:animalDied', function(netId)
     if animal.dead or animal.verifying then return end
     for _ = 1, 8 do
         if IsServerPedDead(animal) or GetPedCauseOfDeath(animal.entity) ~= 0 then
-            MarkAnimalDead(animal)
+            -- z.B. verblutet → dem letzten Schützen zuordnen (Nachsuche)
+            HandleUnattributedDeath(animal)
             return
         end
         Wait(250)
@@ -269,7 +290,7 @@ CreateThread(function()
                     if not animal.deathSeen then
                         animal.deathSeen = now
                     elseif now - animal.deathSeen >= 3 then
-                        MarkAnimalDead(animal)
+                        HandleUnattributedDeath(animal)
                     end
                 end
                 if animal.dead then
@@ -315,6 +336,33 @@ CreateThread(function()
                 end
             end
         end
+
+        -- Köder: angelockte Tiere
+        for _, bait in pairs(GetActiveBaits()) do
+            local cfg = Config.Baits.items[bait.item]
+            if cfg and now >= bait.nextSpawn and bait.spawned < cfg.maxAnimals then
+                local nearest, nearestDist = nil, 200.0
+                for _, p in ipairs(players) do
+                    if GetBucket(p.src) == bait.bucket then
+                        local dist = #(p.coords - bait.coords)
+                        if dist <= nearestDist then nearest, nearestDist = p, dist end
+                    end
+                end
+                if nearest then
+                    bait.nextSpawn = now + math.random(cfg.attractDelay[1], cfg.attractDelay[2])
+                    local typeName = PickAnimalType({ animals = cfg.animals }, 12)
+                    RequestSpawn(nearest.src, bait.zone, 3, {
+                        forceType  = typeName,
+                        origin     = bait.coords,
+                        minDist    = cfg.spawnDistance[1],
+                        maxDist    = cfg.spawnDistance[2],
+                        playerDist = 35.0,
+                        homeRadius = cfg.homeRadius,
+                        bait       = bait.id,
+                    })
+                end
+            end
+        end
     end
 end)
 
@@ -335,7 +383,7 @@ ESX.RegisterCommand('huntspawn', 'admin', function(xPlayer, args)
     end
     local coords = GetPlayerCoords(xPlayer.source)
     local zone = coords and GetZoneAt(coords)
-    RequestSpawn(xPlayer.source, zone and zone.index or nil, 1, { forceType = typeName, minDist = 8.0, maxDist = 15.0 })
+    RequestSpawn(xPlayer.source, zone and zone.index or nil, 1, { forceType = typeName, admin = true, minDist = 8.0, maxDist = 15.0 })
 end, false, { help = 'Jagdtier spawnen', arguments = { { name = 'type', help = 'deer, boar, coyote, rabbit', type = 'string' } } })
 
 ESX.RegisterCommand('huntclear', 'admin', function(xPlayer)

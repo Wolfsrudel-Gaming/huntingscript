@@ -78,31 +78,9 @@ function SendPoliceAlert(src, alertType, coords, info)
     end
 end
 
---[[ Jagdschein (optional, esx_license) ]]
-
-local function HasHuntingLicense(src)
-    if not Config.License.enabled then return true end
-    if GetResourceState('esx_license') ~= 'started' then return true end
-    local p = promise.new()
-    local resolved = false
-    TriggerEvent('esx_license:checkLicense', src, Config.License.type, function(has)
-        if not resolved then
-            resolved = true
-            p:resolve(has == true)
-        end
-    end)
-    SetTimeout(3000, function()
-        if not resolved then
-            resolved = true
-            p:resolve(true)
-        end
-    end)
-    return Citizen.Await(p)
-end
-
 --[[ Beutequalität ]]
 
-local function DetermineQuality(weaponHash, bone)
+function DetermineQuality(weaponHash, bone)
     weaponHash = NormalizeHash(weaponHash)
     if RuinedCauseHashes[weaponHash] then return 'ruined' end
     local hw = HuntingWeaponHashes[weaponHash]
@@ -117,24 +95,115 @@ local function DetermineQuality(weaponHash, bone)
     return 'damaged'
 end
 
+--- Grobe Waffenkategorie für die Kadaver-Untersuchung der Polizei.
+function GetWeaponCategory(weaponHash)
+    weaponHash = NormalizeHash(weaponHash)
+    if weaponHash == 0 then return 'unknown' end
+    if RuinedCauseHashes[weaponHash] then
+        if weaponHash == HashOf('WEAPON_RUN_OVER_BY_CAR') or weaponHash == HashOf('WEAPON_RAMMED_BY_CAR') then
+            return 'vehicle'
+        end
+        return 'explosive'
+    end
+    local hw = HuntingWeaponHashes[weaponHash]
+    if hw then return hw.clean and 'rifle' or 'shotgun' end
+    if KnifeWeaponHashes[weaponHash] then return 'knife' end
+    return 'other'
+end
+
 --[[ Abschuss ]]
 
-local function HandleKillAlert(src, animal, cfg, coords, data)
+local function HandleKillAlert(src, animal, cfg, coords, data, violations)
     local killCfg = Config.Police.kill
     if not killCfg.enabled or IsIgnoredJob(src) then return end
     if IsOnCooldown(src, 'killAlert') then return end
 
     local chance = cfg.alertChance or 0
     if IsNightHour(data.hour) then chance = chance + (killCfg.nightBonus or 0) end
-    if not GetZoneAt(coords, Config.ZoneMargin) then chance = math.max(chance, killCfg.outsideZoneChance or 0) end
+    if violations.outsideZone then chance = math.max(chance, killCfg.outsideZoneChance or 0) end
     if cfg.protected then chance = math.max(chance, killCfg.protectedChance or 0) end
-    if Config.License.enabled and not HasHuntingLicense(src) then
-        chance = math.max(chance, killCfg.noLicenseChance or 0)
-    end
+    if violations.noLicense then chance = math.max(chance, killCfg.noLicenseChance or 0) end
+    if violations.closedSeason then chance = math.max(chance, killCfg.closedSeasonChance or 0) end
+    if violations.overLimit then chance = math.max(chance, killCfg.overLimitChance or 0) end
 
     if math.random(100) <= chance then
         SetCooldown(src, 'killAlert', killCfg.cooldown or 30)
         SendPoliceAlert(src, 'kill', coords, { street = data.street, gender = data.gender, animal = animal.type })
+    end
+end
+
+--- Schließt einen Abschuss ab: Qualität, Legalität, Erfahrung, Statistik, Polizeimeldung.
+---@param animal table Tierdaten
+---@param src number Schütze
+---@param cause number Waffen-Hash
+---@param bone number|nil getroffener Knochen
+---@param data table { hour, street, gender }
+---@param opts table|nil { tracked = bool } – Tier ist nach einem Treffer verendet
+function FinalizeKill(animal, src, cause, bone, data, opts)
+    opts = opts or {}
+    data = data or {}
+    if not DoesEntityExist(animal.entity) or GetPlayerPing(src) <= 0 then
+        MarkAnimalDead(animal)
+        return
+    end
+
+    local cfg = Config.Animals[animal.type]
+    local coords = GetEntityCoords(animal.entity)
+    local quality = DetermineQuality(cause, bone)
+
+    local dailyLimit = GetDailyLimit(animal.type)
+    local violations = {
+        outsideZone  = GetZoneAt(coords, Config.ZoneMargin) == nil,
+        noLicense    = not HasValidLicense(src),
+        closedSeason = IsClosedSeason(animal.type, GetCurrentMonth()),
+        overLimit    = dailyLimit > 0 and GetDailyKills(src, animal.type) >= dailyLimit,
+    }
+    local illegal = violations.outsideZone or violations.noLicense or violations.closedSeason
+        or violations.overLimit or cfg.protected == true
+
+    if animal.dead then
+        animal.killer = src
+        animal.quality = quality
+    else
+        MarkAnimalDead(animal, src, quality)
+    end
+    animal.cause = NormalizeHash(cause)
+    animal.violations = violations
+    animal.illegal = illegal
+    animal.tracked = opts.tracked == true
+
+    RecordKill(src, animal.type, quality, illegal)
+
+    if opts.tracked then
+        NotifyPlayer(src, L('tracking_died', cfg.label), 'info')
+    else
+        NotifyPlayer(src, L('kill_confirmed', cfg.label, L('quality_' .. quality)), 'success')
+    end
+
+    -- Hinweise auf Verstöße (realistisch: der Jäger weiß, was er tut)
+    if violations.noLicense then NotifyPlayer(src, L('violation_no_license'), 'error') end
+    if violations.closedSeason then NotifyPlayer(src, L('violation_closed_season', cfg.label), 'error') end
+    if violations.overLimit then NotifyPlayer(src, L('violation_over_limit', dailyLimit, cfg.label), 'error') end
+
+    if not illegal then
+        local xpCfg = Config.Progression.xp
+        local xp = (xpCfg.kill and xpCfg.kill[animal.type]) or 0
+        if quality == 'perfect' then xp = xp + (xpCfg.perfect or 0) end
+        AddXP(src, xp)
+    end
+
+    HandleKillAlert(src, animal, cfg, coords, data, violations)
+end
+
+--- Tod ohne direkte Abschussmeldung (Verbluten, Sturz, ...): dem letzten Schützen zuordnen.
+function HandleUnattributedDeath(animal)
+    if animal.dead then return end
+    local hit = animal.lastHit
+    if Config.Tracking.enabled and hit and os.time() - hit.time <= Config.Tracking.attributionTime
+        and GetPlayerPing(hit.src) > 0 then
+        FinalizeKill(animal, hit.src, hit.weapon, hit.bone, hit.data, { tracked = true })
+    else
+        MarkAnimalDead(animal)
     end
 end
 
@@ -171,18 +240,7 @@ RegisterNetEvent('wr_hunting:server:animalKilled', function(netId, data)
     -- Waffe: serverseitige Todesursache bevorzugen
     local cause = GetPedCauseOfDeath(animal.entity)
     if not cause or cause == 0 then cause = tonumber(data.weapon) or 0 end
-    local quality = DetermineQuality(cause, data.bone)
-
-    if animal.dead then
-        animal.killer = src
-        animal.quality = quality
-    else
-        MarkAnimalDead(animal, src, quality)
-    end
-
-    local cfg = Config.Animals[animal.type]
-    NotifyPlayer(src, L('kill_confirmed', cfg.label, L('quality_' .. quality)), 'success')
-    HandleKillAlert(src, animal, cfg, coords, data)
+    FinalizeKill(animal, src, cause, data.bone, data)
 end)
 
 --[[ Jagdwaffe außerhalb eines Reviers ]]
@@ -236,4 +294,6 @@ RegisterNetEvent('wr_hunting:server:requestSync', function()
     TriggerClientEvent('wr_hunting:client:setBucket', src, PlayerBuckets[src])
     SyncCampfires(src)
     SyncTrophies(src)
+    SyncBaits(src)
+    SyncBlinds(src)
 end)

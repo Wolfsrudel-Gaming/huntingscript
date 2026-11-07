@@ -8,7 +8,8 @@ local providers = {}
 local current = nil
 
 ---@param id string
----@param provider function(coords: vector3, ped: number): table|nil  { dist = number, text = string, action = function }
+---@param provider function(coords: vector3, ped: number): table|nil
+---   { dist = number, text = string, action = function, secondary = { key = number, text = string, action = function } }
 function RegisterInteraction(id, provider)
     providers[id] = provider
 end
@@ -33,19 +34,26 @@ CreateThread(function()
     end
 end)
 
+local function Run(action)
+    current = nil
+    Busy = true
+    CreateThread(function()
+        local ok, err = pcall(action)
+        if not ok then print('^1[wr_hunting] Fehler bei Interaktion:^7', err) end
+        Busy = false
+    end)
+end
+
 CreateThread(function()
     while true do
         if current and not Busy then
-            HelpText(current.text)
+            local interaction = current
+            local secondary = interaction.secondary
+            HelpText(secondary and (interaction.text .. '~n~' .. secondary.text) or interaction.text)
             if IsControlJustReleased(0, Config.InteractKey) then
-                local interaction = current
-                current = nil
-                Busy = true
-                CreateThread(function()
-                    local ok, err = pcall(interaction.action)
-                    if not ok then print('^1[wr_hunting] Fehler bei Interaktion:^7', err) end
-                    Busy = false
-                end)
+                Run(interaction.action)
+            elseif secondary and IsControlJustReleased(0, secondary.key) then
+                Run(secondary.action)
             end
             Wait(0)
         else

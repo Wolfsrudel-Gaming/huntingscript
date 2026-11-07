@@ -128,6 +128,28 @@ local function ReportKill(victim)
     })
 end
 
+--- Treffer ohne Todesfolge (für Schweißfährte & Nachsuche)
+local lastHitReport = {}
+function ReportHit(victim, weaponArg)
+    if not Config.Tracking.enabled or not DoesEntityExist(victim) then return end
+    local netId = NetworkGetNetworkIdFromEntity(victim)
+    local now = GetGameTimer()
+    if lastHitReport[netId] and now - lastHitReport[netId] < 750 then return end
+    lastHitReport[netId] = now
+
+    local _, bone = GetPedLastDamageBone(victim)
+    local weapon = tonumber(weaponArg) or 0
+    if weapon == 0 then weapon = GetSelectedPedWeapon(PlayerPedId()) end
+    local ped = PlayerPedId()
+    TriggerServerEvent('wr_hunting:server:animalHit', netId, {
+        weapon = NormalizeHash(weapon),
+        bone   = bone,
+        hour   = GetClockHours(),
+        street = GetStreetLabel(GetEntityCoords(victim)),
+        gender = IsPedMale(ped) and 'male' or 'female',
+    })
+end
+
 AddEventHandler('gameEventTriggered', function(name, args)
     if name ~= 'CEventNetworkEntityDamage' then return end
     local victim, attacker = args[1], args[2]
@@ -140,6 +162,8 @@ AddEventHandler('gameEventTriggered', function(name, args)
         Wait(100)
         if fatal or IsPedDeadOrDying(victim, true) or IsEntityDead(victim) then
             ReportKill(victim)
+        else
+            ReportHit(victim, args[7])
         end
     end)
 end)
